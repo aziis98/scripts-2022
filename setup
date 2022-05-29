@@ -1,0 +1,109 @@
+#!/bin/bash
+
+usage() {
+	cat <<EOF
+Usage of "$0"
+A small utility to link and copy files across the system (a more general system that can be used to manage dotfiles)
+
+Options:
+    -h, --help	Show this help
+
+Directives:
+    A directive starts with the keyword "[Script]", this can be placed for example inside a line comment. Then must follow one of the following directives
+
+    @Link TARGET
+        Link a script file to a target destination. Creates missing folders.
+
+    @Copy TARGET
+        Copy a script file to a target destination, removing the copy declaration. Creates missing folders.
+
+Paths:
+    The following variables are expanded inside directives arguments.
+
+    Pattern   | Description
+    ---------------------------------
+    ~         | Home folder
+    %f        | Script base name
+    %r        | Script relative path
+    %p        | Script absolute path
+
+EOF
+}
+
+# Setup
+
+SCRIPT_STORE="$HOME/.cache/scripts-store"
+
+mkdir -p "$(dirname "$SCRIPT_STORE")"
+touch "$SCRIPT_STORE"
+
+# Basic options
+
+if [[ "$1" = '--help' || "$1" = '-h' ]]; then
+	usage
+	exit 0
+fi
+
+if [[ "$1" = '--status' || "$1" = '-s' ]]; then
+	printf 'Current Setup:\n'
+	cat "$SCRIPT_STORE"
+	exit 0
+fi
+
+# Cache
+
+finalize_store() {
+	cat "$SCRIPT_STORE" | sort | uniq > "/tmp/scripts-store"
+	cat "/tmp/scripts-store" > "$SCRIPT_STORE"
+}
+
+# Directives
+
+directive_link() {
+	printf 'Linked "%s" to "%s"\n' "$2" "$1"
+	
+	scriptRealpath="$(realpath "$1")"
+
+	mkdir -p "$(dirname "$2")"
+	ln -sf "$scriptRealpath" "$2"
+
+	printf '"%s" -> "%s"\n' "$2" "$scriptRealpath" >> "$SCRIPT_STORE"
+}
+
+directive_copy() {
+	printf 'Copied "%s" from "%s"\n' "$2" "$1"
+	
+	mkdir -p "$(dirname "$2")"
+	grep -v -F '[Script]' "$1" > "$2"
+
+	printf '"%s" -> "%s"\n' "$2" "$scriptRealpath" >> "$SCRIPT_STORE"
+}
+
+# Parse recursively current folder
+
+grep --exclude=setup -r -F '[Script]' . | \
+while read scriptDeclaration; do
+	scriptFile="$(echo "$scriptDeclaration"| cut -d ':' -f 1)"
+	scriptDirective="$(echo "$scriptDeclaration"| sed -E 's|(.*)\[Script\] ||g')"
+
+	scriptCommand="$(echo "$scriptDirective" | sed -E 's|.+?@(\w+).+|\1|')"
+	scriptArgs="$(echo "$scriptDirective" | sed -E 's|@\w+ (.+)|\1|')"
+
+	scriptArgsEvaluated="$(echo "$scriptArgs" | \
+		sed -E "s:~:$HOME:g" | \
+		sed -E "s:%f:$(basename "$scriptFile"):g" | \
+		sed -E "s:%r:$scriptFile:g" | \
+		sed -E "s:%p:$(realpath "$scriptFile"):g" \
+	)"
+
+	case "$scriptCommand" in
+		Link)
+			directive_link "$scriptFile" "$scriptArgsEvaluated"
+			;;
+		Copy)
+			directive_copy "$scriptFile" "$scriptArgsEvaluated"
+			;;
+	esac
+done
+
+finalize_store
